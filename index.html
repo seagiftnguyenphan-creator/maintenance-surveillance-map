@@ -456,6 +456,9 @@ body.edit-layout .edit-bar{display:flex}
 .dp-info{flex:1}
 .dp-zone{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);margin-bottom:2px;display:flex;align-items:center;gap:5px}
 .dp-title{font-size:14px;font-weight:600;color:var(--text);line-height:1.3}
+.dp-title-input{display:block;width:100%;background:transparent;border:1px solid transparent;border-radius:4px;padding:2px 4px;margin:-2px -4px;font-family:inherit}
+.dp-title-input:hover{border-color:rgba(255,255,255,.12)}
+.dp-title-input:focus{outline:none;border-color:var(--accent);background:var(--surface2)}
 .dp-meta{display:flex;align-items:center;gap:5px;margin-top:4px;flex-wrap:wrap}
 .sb{font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:.04em;text-transform:uppercase}
 .sb.critical{background:var(--red-dim);color:var(--red);border:1px solid rgba(232,72,72,.25)}
@@ -1370,7 +1373,10 @@ function renderDetail(id){
 
   document.getElementById("dp-info").innerHTML=
     `<div class="dp-zone">${z?.name||""}${occ?` <span style="font-size:8px;color:var(--blue);background:var(--blue-dim);padding:1px 5px;border-radius:3px">ĐANG SẢN XUẤT</span>`:""}</div>`+
-    `<div class="dp-title">${iss.title}</div>`+
+    `<input class="dp-title dp-title-input" value="${iss.title.replace(/"/g,'&quot;')}"
+       oninput="renameIssueTitle('${iss.id}',this.value)"
+       onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+       title="Nhấn để đổi tên sự cố">`+
     `<div class="dp-meta">
       ${iss.status!=="done"
         ? `<select class="sev-sel ${iss.severity}" onchange="changeSeverity('${iss.id}',this.value)" title="Đổi mức độ nghiêm trọng">
@@ -1506,6 +1512,16 @@ function renameFinding(id,fi,val){
   iss.findings[fi].t=val;
   clearTimeout(_renameTimer);
   _renameTimer = setTimeout(persistState, 800);
+}
+
+let _titleRenameTimer = null;
+function renameIssueTitle(id,val){
+  const iss=issues.find(i=>i.id===id);if(!iss)return;
+  iss.title=val;
+  const card=document.querySelector(`.icard[onclick="selectIssue('${id}')"] .ic-title`);
+  if(card) card.textContent=val;
+  clearTimeout(_titleRenameTimer);
+  _titleRenameTimer = setTimeout(persistState, 800);
 }
 
 // ── Priority ──
@@ -1920,15 +1936,21 @@ function attachZoneDrag(ovEl, zone){
     if(e.target.classList.contains("rh")) return;
     e.stopPropagation(); e.preventDefault();
     const mapInner = document.getElementById("map-inner");
-    const W = mapInner.clientWidth, H = mapInner.clientHeight;
-    const startX = e.clientX, startY = e.clientY;
-    const startOx = zone.ox, startOy = zone.oy;
+    // Use live getBoundingClientRect (reflects actual on-screen scale/zoom/DPI)
+    // instead of clientWidth+zoom math, which drifts whenever the rendered
+    // size doesn't exactly match the cached prediction (e.g. hosted vs local).
+    const rect0 = mapInner.getBoundingClientRect();
+    const cursorPctX0 = (e.clientX - rect0.left)/rect0.width*100;
+    const cursorPctY0 = (e.clientY - rect0.top)/rect0.height*100;
+    const offX = cursorPctX0 - zone.ox; // cursor offset from zone's top-left, in %
+    const offY = cursorPctY0 - zone.oy;
     ovEl.style.opacity = ".7";
     function onMove(ev){
-      const dx = (ev.clientX - startX)/zoom/W*100;
-      const dy = (ev.clientY - startY)/zoom/H*100;
-      zone.ox = Math.max(0, Math.min(100-zone.ow, startOx+dx));
-      zone.oy = Math.max(0, Math.min(100-zone.oh, startOy+dy));
+      const rect = mapInner.getBoundingClientRect();
+      const cursorPctX = (ev.clientX - rect.left)/rect.width*100;
+      const cursorPctY = (ev.clientY - rect.top)/rect.height*100;
+      zone.ox = Math.max(0, Math.min(100-zone.ow, cursorPctX-offX));
+      zone.oy = Math.max(0, Math.min(100-zone.oh, cursorPctY-offY));
       ovEl.style.left = zone.ox+"%";
       ovEl.style.top  = zone.oy+"%";
       syncPinToCenter(zone);
@@ -1950,13 +1972,17 @@ function attachResizeHandle(rhEl, zone, corner){
     if(!editLayoutMode) return;
     e.stopPropagation(); e.preventDefault();
     const mapInner = document.getElementById("map-inner");
-    const W = mapInner.clientWidth, H = mapInner.clientHeight;
-    const startX=e.clientX, startY=e.clientY;
+    const rect0 = mapInner.getBoundingClientRect();
+    const cursorPctX0 = (e.clientX - rect0.left)/rect0.width*100;
+    const cursorPctY0 = (e.clientY - rect0.top)/rect0.height*100;
     const s0={ox:zone.ox,oy:zone.oy,ow:zone.ow,oh:zone.oh};
     const MIN=4; // min 4% size
     function onMove(ev){
-      const dx=(ev.clientX-startX)/zoom/W*100;
-      const dy=(ev.clientY-startY)/zoom/H*100;
+      const rect = mapInner.getBoundingClientRect();
+      const cursorPctX = (ev.clientX - rect.left)/rect.width*100;
+      const cursorPctY = (ev.clientY - rect.top)/rect.height*100;
+      const dx = cursorPctX - cursorPctX0;
+      const dy = cursorPctY - cursorPctY0;
       if(corner==="br"){zone.ow=Math.max(MIN,s0.ow+dx);zone.oh=Math.max(MIN,s0.oh+dy);}
       else if(corner==="bl"){const nw=Math.max(MIN,s0.ow-dx);zone.ox=s0.ox+(s0.ow-nw);zone.ow=nw;zone.oh=Math.max(MIN,s0.oh+dy);}
       else if(corner==="tr"){zone.ow=Math.max(MIN,s0.ow+dx);const nh=Math.max(MIN,s0.oh-dy);zone.oy=s0.oy+(s0.oh-nh);zone.oh=nh;}
